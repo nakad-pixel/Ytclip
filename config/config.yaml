@@ -1,0 +1,97 @@
+# AutoClip Gaming Configuration
+
+system:
+  name: "AutoClip Gaming"
+  version: "1.0.0"
+  environment: "production"
+  log_level: "INFO"
+
+discovery:
+  niches:
+    - "Roblox"
+    - "Horror games"
+    - "Fortnite"
+  min_views: 10000
+  max_age_days: 7
+  search_order: "viewCount"
+  max_results_per_niche: 50
+
+video_processing:
+  max_parallel: 2
+  timeout_seconds: 1800
+  target_format: "mp4"
+  target_codec: "h264"
+  target_audio_codec: "aac"
+
+virality_scoring:
+  enabled: true
+  min_score_for_clipping: 70
+  algorithm:
+    audio_excitement_weight: 0.25
+    visual_intensity_weight: 0.20
+    emotional_arc_weight: 0.20
+    hook_potential_weight: 0.15
+    trend_alignment_weight: 0.10
+
+video_editing:
+  target_format: "9:16"  # Vertical video
+  resolutions:
+    youtube_shorts:
+      width: 1080
+      height: 1920
+      fps: 30
+      max_duration: 60
+    tiktok:
+      width: 1080
+      height: 1920
+      fps: 30
+      max_duration: 600
+    instagram_reels:
+      width: 1080
+      height: 1920
+      fps: 30
+      max_duration: 90
+
+  captions:
+    enabled: true
+    style: "gaming"
+    color: "yellow"
+    background_color: "black"
+    font_size: 40
+    animation: true
+
+seo:
+  title_style: "clickbait"
+  hashtag_count: 15
+  description_length: "medium"
+  keywords_per_clip: 5
+
+quality_assurance:
+  enabled: true
+  strictness: "strict"
+  checks:
+    resolution: true
+    audio_sync: true
+    profanity: true
+    copyright_music: true
+    violence_threshold: 0.7
+    face_detection: true
+
+publishing:
+  platforms:
+    - "youtube"
+    - "tiktok"
+    - "instagram"
+  daily_limit: 3
+  stagger_minutes: 120
+  approval_threshold: 85
+
+analytics:
+  enabled: true
+  fetch_after_hours: 24
+  update_frequency_hours: 12
+  improvement_threshold: 0.10
+
+database:
+  type: "sqlite"
+  path: "data/videos.db"

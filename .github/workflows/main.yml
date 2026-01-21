@@ -1,0 +1,92 @@
+name: AutoClip Gaming Pipeline
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'  # Every 6 hours
+  workflow_dispatch:
+
+env:
+  PYTHON_VERSION: '3.10'
+
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    outputs:
+      videos: ${{ steps.discover.outputs.videos }}
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Run discovery
+        id: discover
+        run: python src/discovery.py
+        env:
+          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+      - name: Upload videos artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: discovered-videos
+          path: data/discovered_videos.json
+
+  process:
+    needs: discover
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        video: ${{ fromJson(needs.discover.outputs.videos) }}
+      max-parallel: 2
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+      - name: Process video
+        run: python src/processor.py --video-id ${{ matrix.video }}
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      - name: Upload results
+        uses: actions/upload-artifact@v3
+        with:
+          name: processed-clips-${{ matrix.video }}
+          path: data/clips/
+
+  publish:
+    needs: process
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Download all artifacts
+        uses: actions/download-artifact@v3
+      - name: Publish clips
+        run: python src/publisher.py
+        env:
+          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+          TIKTOK_ACCESS_TOKEN: ${{ secrets.TIKTOK_ACCESS_TOKEN }}
+          INSTAGRAM_ACCESS_TOKEN: ${{ secrets.INSTAGRAM_ACCESS_TOKEN }}
+
+  cleanup:
+    if: always()
+    needs: [discover, process, publish]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete artifacts
+        uses: geekyeggo/delete-artifact@v2
+        with:
+          name: '*'

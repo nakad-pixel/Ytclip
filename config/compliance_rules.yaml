@@ -1,0 +1,96 @@
+# Compliance Rules for Quality Assurance
+
+profanity:
+  enabled: true
+  level: "strict"  # strict, moderate, lenient
+  filter_list:
+    - "fuck"
+    - "shit"
+    - "bitch"
+    - "ass"
+    - "damn"
+    - "hell"
+    - "nigger"
+    - "nigga"
+    - "fag"
+    - "faggot"
+    - "retard"
+
+copyright:
+  enabled: true
+  checks:
+    - music_detection
+    - watermarks
+    - content_matching
+
+  music_detection:
+    enabled: true
+    services:
+      - "youtube_audio_library"
+
+  watermarks:
+    enabled: true
+    check_for:
+      - "watermark"
+      - "logo"
+      - "branding"
+
+  content_matching:
+    enabled: true
+    threshold: 0.8
+
+content_safety:
+  enabled: true
+  violence_threshold: 0.7
+  nudity_threshold: 0.8
+
+quality_standards:
+  video:
+    min_resolution: "720p"
+    min_fps: 24
+    max_duration_youtube: 60
+    max_duration_tiktok: 180
+    max_duration_instagram: 90
+
+  audio:
+    min_bitrate: "128k"
+    require_voice: true
+
+  content:
+    min_quote_length: 5
+    max_quote_length: 150
+    require_meaningful_content: true
+
+platform_rules:
+  youtube:
+    min_duration: 5
+    max_duration: 60
+    allowed_codecs:
+      - "h264"
+      - "hevc"
+    aspect_ratios:
+      - "9:16"
+
+  tiktok:
+    min_duration: 5
+    max_duration: 180
+    allowed_codecs:
+      - "h264"
+    aspect_ratios:
+      - "9:16"
+
+  instagram:
+    min_duration: 5
+    max_duration: 90
+    allowed_codecs:
+      - "h264"
+    aspect_ratios:
+      - "9:16"
+
+auto_rejection:
+  enabled: true
+  criteria:
+    - profanity_severe
+    - copyright_violation
+    - quality_below_threshold
+    - content_safety_violation

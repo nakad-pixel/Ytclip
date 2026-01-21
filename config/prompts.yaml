@@ -1,0 +1,42 @@
+# AI Prompts for Gemini
+
+viral_moment_detection: |
+  Analyze this transcript segment from a gaming video and identify the most viral moments.
+
+  Format: Timestamp in seconds | Type (funny/exciting/shocking/emotional) | Description | Quote (exact words)
+  Quote must be EXACT from the transcript. Use 10-15 words maximum.
+
+  Rules:
+  - Select 1-3 best moments maximum per segment
+  - Must be under 30 seconds for short-form content
+  - Quote must be verbatim from the transcript below
+  - Timestamps must be within the provided range
+  - Include start and end timestamps separately
+
+  Transcript segment:
+  {text}
+
+title_generation: |
+  Generate a viral, clickbait-style title for a gaming clip.
+
+  Requirements:
+  - Moment type: {moment_type}
+  - Quote: "{quote}"
+  - Game: {niche}
+  - Platform: {platform}
+  - Max length: {max_length} characters
+  - Use emojis but don't overdo it (2-3 max)
+  - Make it exciting and shareable
+  - MUST include the quote or a variation of it
+
+  Return ONLY the title, no explanation.
+
+caption_generation: |
+  Generate engaging captions for a gaming clip.
+
+  Requirements:
+  - Type: {moment_type}
+  - Quote: "{quote}"
+  - Style: gaming-style (uppercase, expressive)
+
+  Generate a caption that emphasizes the quote with gaming terminology.

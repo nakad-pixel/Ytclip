@@ -8,6 +8,9 @@ ffmpeg-python==0.2.1
 Pillow==10.1.0
 numpy==1.24.3
 
+# Audio/Video Processing - CRITICAL FIX
+openai-whisper==20240930
+
 # AI/ML
 google-generativeai==0.3.1
 

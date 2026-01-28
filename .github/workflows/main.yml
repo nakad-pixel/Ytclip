@@ -12,47 +12,67 @@ jobs:
   discover:
     runs-on: ubuntu-latest
     outputs:
-      videos: ${{ steps.discover.outputs.videos }}
-      videos_count: ${{ steps.discover.outputs.videos_count }}
-
+      videos: ${{ steps.extract_videos.outputs.videos }}
+      videos_count: ${{ steps.extract_videos.outputs.videos_count }}
     steps:
       - uses: actions/checkout@v4
-
+      
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-
+      
       - name: Install system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg jq
-
+      
       - name: Install Python dependencies
         run: pip install -r requirements.txt
-
-      - name: Run discovery
-        id: discover
+      
+      - name: Validate YouTube API Key
         run: |
-          python src/discovery.py
-
-          if [ -f data/discovered_videos.json ]; then
-            videos=$(jq -c '.' data/discovered_videos.json)
-            count=$(jq 'length' data/discovered_videos.json)
-
-            echo "videos=${videos}" >> "$GITHUB_OUTPUT"
-            echo "videos_count=${count}" >> "$GITHUB_OUTPUT"
-
-            echo "Discovery complete: Found ${count} videos"
-            echo "Video IDs JSON: ${videos}"
-          else
-            echo "videos=[]" >> "$GITHUB_OUTPUT"
-            echo "videos_count=0" >> "$GITHUB_OUTPUT"
-            echo "No videos discovered (data/discovered_videos.json not found)"
+          if [ -z "${{ secrets.YOUTUBE_API_KEY }}" ]; then
+            echo "❌ ERROR: YOUTUBE_API_KEY secret is not set!"
+            echo "Please add YOUTUBE_API_KEY to GitHub Secrets"
+            exit 1
           fi
+          echo "✓ YouTube API Key is set"
+      
+      - name: Run discovery
+        id: discovery
+        run: python src/discovery.py
         env:
           YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
-
+      
+      - name: Extract videos and set output
+        id: extract_videos
+        run: |
+          if [ ! -f data/discovered_videos.json ]; then
+            echo "❌ ERROR: discovery.py did not create discovered_videos.json"
+            echo "videos=[]" >> $GITHUB_OUTPUT
+            echo "videos_count=0" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+          
+          # Get count
+          count=$(jq length data/discovered_videos.json 2>/dev/null || echo "0")
+          echo "videos_count=${count}" >> $GITHUB_OUTPUT
+          
+          # Get video IDs as JSON array (use Python for robustness)
+          videos=$(python3 -c "
+          import json
+          with open('data/discovered_videos.json') as f:
+              data = json.load(f)
+          ids = [v['youtube_id'] for v in data]
+          print(json.dumps(ids))
+          " 2>/dev/null || echo "[]")
+          
+          echo "videos=${videos}" >> $GITHUB_OUTPUT
+          
+          echo "✓ Extracted ${count} videos"
+          echo "Video IDs: ${videos}"
+      
       - name: Upload videos artifact
         uses: actions/upload-artifact@v4
         with:

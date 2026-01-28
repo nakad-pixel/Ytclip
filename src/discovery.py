@@ -92,6 +92,11 @@ class DiscoveryService:
                 id=video_id
             )
             response = request.execute()
+            
+            if not response.get('items'):
+                logger.warning(f"No details found for video {video_id}")
+                return {}
+                
             item = response['items'][0]
             stats = item['statistics']
             details = item['contentDetails']
@@ -136,6 +141,7 @@ class DiscoveryService:
                 f"https://www.youtube.com/watch?v={video_id}"
             ))
             conn.commit()
+            logger.info(f"Saved video to database: {video_id}")
         except sqlite3.IntegrityError:
             logger.debug(f"Video {video_id} already in database")
         finally:
@@ -146,6 +152,7 @@ class DiscoveryService:
         discovered_videos = []
 
         for niche in NICHES:
+            logger.info(f"Searching niche: {niche}")
             videos = self.search_niche(niche)
 
             for video in videos:
@@ -158,6 +165,10 @@ class DiscoveryService:
 
                 # Get detailed stats
                 details = self.get_video_details(video_id)
+                if not details:
+                    logger.warning(f"Skipping video {video_id}: no details available")
+                    continue
+                    
                 video.update(details)
 
                 # Filter by minimum views
@@ -176,21 +187,41 @@ class DiscoveryService:
 def main():
     api_key = os.getenv('YOUTUBE_API_KEY')
     if not api_key:
+        logger.error("YOUTUBE_API_KEY environment variable not set")
+        # Set empty outputs for GitHub Actions
+        github_output = os.environ.get('GITHUB_OUTPUT')
+        if github_output:
+            with open(github_output, 'a') as f:
+                f.write(f"videos=[]\n")
+                f.write(f"video_count=0\n")
         raise ValueError("YOUTUBE_API_KEY environment variable not set")
 
     service = DiscoveryService(api_key)
     videos = service.run()
 
-    # Output for GitHub Actions
+    # Save to file
     os.makedirs('data', exist_ok=True)
     with open('data/discovered_videos.json', 'w') as f:
-        json.dump(videos, f)
+        json.dump(videos, f, indent=2)
 
-    # Also set GitHub Actions output
-    output = json.dumps(videos)
-    with open(os.environ.get('GITHUB_OUTPUT', '/tmp/github_output'), 'a') as f:
-        f.write(f"videos={output}\n")
+    # Output for GitHub Actions
+    # CRITICAL FIX: Output as JSON array directly for matrix strategy
+    github_output = os.environ.get('GITHUB_OUTPUT')
+    if github_output:
+        with open(github_output, 'a') as f:
+            # Output the array in the correct format for matrix
+            videos_json = json.dumps(videos)
+            f.write(f"videos={videos_json}\n")
+            f.write(f"video_count={len(videos)}\n")
+            logger.info(f"Set GitHub Actions output: {len(videos)} videos")
+    else:
+        logger.warning("GITHUB_OUTPUT environment variable not set")
 
+    # Also output to stdout for debugging
+    print(f"\nDiscovery Summary:")
+    print(f"Videos discovered: {len(videos)}")
+    print(f"Video IDs: {videos}")
+    
     logger.info("Discovery complete")
 
 if __name__ == '__main__':

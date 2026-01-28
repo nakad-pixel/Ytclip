@@ -13,24 +13,36 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       videos: ${{ steps.discover.outputs.videos }}
+      video_count: ${{ steps.discover.outputs.video_count }}
     steps:
       - uses: actions/checkout@v4
+      
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: ${{ env.PYTHON_VERSION }}
+      
       - name: Install system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg
+      
       - name: Install Python dependencies
         run: pip install -r requirements.txt
+      
       - name: Run discovery
         id: discover
         run: python src/discovery.py
         env:
           YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+      
+      - name: Debug discovery output
+        run: |
+          echo "Videos discovered: ${{ steps.discover.outputs.video_count }}"
+          echo "Video IDs: ${{ steps.discover.outputs.videos }}"
+      
       - name: Upload videos artifact
+        if: steps.discover.outputs.video_count > 0
         uses: actions/upload-artifact@v4
         with:
           name: discovered-videos
@@ -38,56 +50,98 @@ jobs:
 
   process:
     needs: discover
+    if: needs.discover.outputs.video_count > 0
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        video: ${{ fromJson(needs.discover.outputs.videos) }}
+        video_id: ${{ fromJson(needs.discover.outputs.videos) }}
       max-parallel: 2
+      fail-fast: false
     steps:
       - uses: actions/checkout@v4
+      
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: ${{ env.PYTHON_VERSION }}
+      
       - name: Install system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg
+      
       - name: Install Python dependencies
         run: pip install -r requirements.txt
+      
+      - name: Debug video ID
+        run: echo "Processing video ID: ${{ matrix.video_id }}"
+      
       - name: Process video
-        run: python src/processor.py --video-id ${{ matrix.video }}
+        id: process
+        run: python src/processor.py --video-id ${{ matrix.video_id }} --niche gaming
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        continue-on-error: true
+      
+      - name: Check process status
+        if: steps.process.outcome == 'failure'
+        run: echo "::warning::Processing failed for video ${{ matrix.video_id }}"
+      
       - name: Upload results
+        if: steps.process.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
-          name: processed-clips-${{ matrix.video }}
+          name: processed-clips-${{ matrix.video_id }}
           path: data/clips/
 
   publish:
     needs: process
+    if: success() || failure()  # Run even if some process jobs failed
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: ${{ env.PYTHON_VERSION }}
+      
       - name: Install system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg
+      
       - name: Install Python dependencies
         run: pip install -r requirements.txt
+      
       - name: Download all artifacts
         uses: actions/download-artifact@v4
+        with:
+          path: artifacts/
+        continue-on-error: true
+      
+      - name: List artifacts
+        run: |
+          echo "Downloaded artifacts:"
+          ls -la artifacts/ || echo "No artifacts found"
+      
+      - name: Copy clips to data directory
+        run: |
+          mkdir -p data/clips
+          if [ -d "artifacts" ]; then
+            find artifacts -name "*.mp4" -exec cp {} data/clips/ \;
+            echo "Copied clips to data/clips/"
+          fi
+        continue-on-error: true
+      
       - name: Publish clips
         run: python src/publisher.py
         env:
           YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+          YOUTUBE_CLIENT_SECRETS: ${{ secrets.YOUTUBE_CLIENT_SECRETS }}
           TIKTOK_ACCESS_TOKEN: ${{ secrets.TIKTOK_ACCESS_TOKEN }}
           INSTAGRAM_ACCESS_TOKEN: ${{ secrets.INSTAGRAM_ACCESS_TOKEN }}
+        continue-on-error: true
 
   cleanup:
     if: always()
@@ -98,3 +152,4 @@ jobs:
         uses: geekyeggo/delete-artifact@v2
         with:
           name: '*'
+        continue-on-error: true

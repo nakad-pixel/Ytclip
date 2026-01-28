@@ -149,7 +149,7 @@ class DiscoveryService:
         try:
             request = self.youtube.videos().list(
                 id=video_id,
-                part='statistics,contentDetails'
+                part='statistics,contentDetails,snippet'
             )
             response = request.execute()
             

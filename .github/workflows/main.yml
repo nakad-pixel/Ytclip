@@ -157,12 +157,29 @@ jobs:
         with:
           path: data/artifacts
 
-      - name: Publish clips
+      - name: Organize clip data
+        run: |
+          mkdir -p data/clips
+          # Move all processed clips to统一的clips directory
+          find data/artifacts -name "*_result.json" -exec cp {} data/clips/ \;
+          # Copy clip files
+          find data/artifacts -name "*.mp4" -exec mkdir -p data/clips/clips \; -exec cp {} data/clips/clips/ \;
+          echo "✓ Organized clip data for smart publisher"
+
+      - name: Smart 1-Video Publishing
         run: python src/publisher.py
         env:
           YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
           TIKTOK_ACCESS_TOKEN: ${{ secrets.TIKTOK_ACCESS_TOKEN }}
           INSTAGRAM_ACCESS_TOKEN: ${{ secrets.INSTAGRAM_ACCESS_TOKEN }}
+
+      - name: Upload publishing state
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: publishing-state
+          path: data/publishing_state.json
+          if-no-files-found: ignore
 
   cleanup:
     if: always()

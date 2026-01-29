@@ -93,7 +93,7 @@ class CaptionGenerator:
         return captions
 
     def create_word_by_word_captions(self, moment: Dict[str, Any],
-                                     quote: Optional[str = None]) -> List[Dict[str, Any]]:
+                                     quote: Optional[str] = None) -> List[Dict[str, Any]]:
         """
         Create word-by-word animated captions (karaoke style).
         Each word appears at a specific time.

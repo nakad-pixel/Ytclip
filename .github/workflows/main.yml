@@ -89,7 +89,7 @@ jobs:
       fail-fast: false
       matrix:
         video: ${{ fromJson(needs.discover.outputs.videos || '[]') }}
-      max-parallel: 2
+      max-parallel: 10  # Increased from 2 - no file downloads, can process much faster!
 
     steps:
       - uses: actions/checkout@v4
@@ -105,17 +105,13 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg
-
       - name: Install Python dependencies
         run: pip install -r requirements.txt
 
-      - name: Process video
+      - name: Process video (API-first - no downloads!)
         run: python src/processor.py --video-id ${{ matrix.video }}
         env:
+          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
 
       - name: Upload results
@@ -123,7 +119,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: processed-clips-${{ matrix.video }}
-          path: data/clips/
+          path: data/clips/${{ matrix.video }}_metadata.json
           if-no-files-found: ignore
 
   publish:
@@ -160,11 +156,13 @@ jobs:
       - name: Organize clip data
         run: |
           mkdir -p data/clips
-          # Move all processed clips to统一的clips directory
-          find data/artifacts -name "*_result.json" -exec cp {} data/clips/ \;
-          # Copy clip files
-          find data/artifacts -name "*.mp4" -exec mkdir -p data/clips/clips \; -exec cp {} data/clips/clips/ \;
-          echo "✓ Organized clip data for smart publisher"
+          # Move all clip metadata to clips directory
+          find data/artifacts -name "*_metadata.json" -exec cp {} data/clips/ \;
+          echo "✓ Organized clip metadata for smart publisher"
+          
+          # Count metadata files
+          metadata_count=$(find data/clips -name "*_metadata.json" | wc -l)
+          echo "Found ${metadata_count} clip metadata files"
 
       - name: Smart 1-Video Publishing
         run: python src/publisher.py

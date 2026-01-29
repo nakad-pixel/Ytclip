@@ -155,16 +155,33 @@ class DiscoveryService:
             
             if response['items']:
                 item = response['items'][0]
-                return {
+                stats = {
                     'view_count': int(item['statistics'].get('viewCount', 0)),
+                    'like_count': int(item['statistics'].get('likeCount', 0)),
+                    'comment_count': int(item['statistics'].get('commentCount', 0)),
                     'duration': item['contentDetails']['duration'],
-                    'published_at': item['snippet']['publishedAt']
+                    'published_at': item['snippet']['publishedAt'],
+                    'has_captions': self._check_captions_available(video_id)
                 }
+                return stats
             return {'view_count': 0}
         
         except Exception as e:
             logger.error(f"Error getting stats for {video_id}: {e}")
             return {'view_count': 0}
+    
+    def _check_captions_available(self, video_id: str) -> bool:
+        """Check if captions are available for video."""
+        try:
+            request = self.youtube.captions().list(
+                videoId=video_id,
+                part='snippet'
+            )
+            response = request.execute()
+            return len(response.get('items', [])) > 0
+        except Exception as e:
+            logger.debug(f"Could not check captions for {video_id}: {e}")
+            return False
 
     def is_already_processed(self, video_id: str) -> bool:
         """Check if video has already been processed."""

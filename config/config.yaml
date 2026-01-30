@@ -16,6 +16,15 @@ discovery:
   search_order: "viewCount"
   max_results_per_niche: 50
 
+processing:
+  # Phase 1: Analysis phase (no downloads)
+  max_videos_to_analyze: 100
+  virality_threshold: 70
+  
+  # Phase 2: Download & publish phase
+  max_videos_to_process: 2
+  processing_interval_hours: 12
+
 video_processing:
   max_parallel: 2
   timeout_seconds: 1800

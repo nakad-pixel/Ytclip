@@ -51,9 +51,34 @@ class Database:
                 processed BOOLEAN DEFAULT 0,
                 discovered_at TEXT,
                 url TEXT,
-                metadata_json TEXT
+                metadata_json TEXT,
+                status TEXT DEFAULT 'discovered',
+                virality_score REAL DEFAULT 0.0,
+                analyzed_at TEXT,
+                processed_at TEXT
             )
         ''')
+        
+        # Add new columns to existing tables (for backward compatibility)
+        try:
+            cursor.execute('ALTER TABLE videos ADD COLUMN status TEXT DEFAULT "discovered"')
+        except sqlite3.OperationalError:
+            pass  # Column already exists
+        
+        try:
+            cursor.execute('ALTER TABLE videos ADD COLUMN virality_score REAL DEFAULT 0.0')
+        except sqlite3.OperationalError:
+            pass
+        
+        try:
+            cursor.execute('ALTER TABLE videos ADD COLUMN analyzed_at TEXT')
+        except sqlite3.OperationalError:
+            pass
+        
+        try:
+            cursor.execute('ALTER TABLE videos ADD COLUMN processed_at TEXT')
+        except sqlite3.OperationalError:
+            pass
 
         # Clips table for tracking generated clips
         cursor.execute('''
@@ -342,11 +367,110 @@ class Database:
         finally:
             conn.close()
 
+    # Phase 2 pipeline methods
+
+    def get_discovered_videos(self, limit: int = 100) -> List[Dict[str, Any]]:
+        """Get all videos not yet analyzed."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        try:
+            cursor.execute('''
+                SELECT * FROM videos 
+                WHERE status = 'discovered' 
+                ORDER BY discovered_at DESC 
+                LIMIT ?
+            ''', (limit,))
+
+            rows = cursor.fetchall()
+            return [self._row_to_video_dict(row) for row in rows]
+
+        except Exception as e:
+            logger.error(f"Error getting discovered videos: {e}")
+            return []
+        finally:
+            conn.close()
+
+    def get_top_analyzed_videos(self, limit: int = 2, threshold: float = 70.0) -> List[Dict[str, Any]]:
+        """Get top-scoring analyzed videos above threshold."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        try:
+            cursor.execute('''
+                SELECT * FROM videos 
+                WHERE status = 'analyzed' AND virality_score >= ? 
+                ORDER BY virality_score DESC 
+                LIMIT ?
+            ''', (threshold, limit))
+
+            rows = cursor.fetchall()
+            return [self._row_to_video_dict(row) for row in rows]
+
+        except Exception as e:
+            logger.error(f"Error getting top analyzed videos: {e}")
+            return []
+        finally:
+            conn.close()
+
+    def update_video_status(self, youtube_id: str, status: str, 
+                           virality_score: Optional[float] = None) -> bool:
+        """Update video status and optionally virality score."""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        try:
+            if virality_score is not None:
+                # Update with virality score
+                if status == 'analyzed':
+                    cursor.execute('''
+                        UPDATE videos 
+                        SET status = ?, virality_score = ?, analyzed_at = ?
+                        WHERE youtube_id = ?
+                    ''', (status, virality_score, datetime.now().isoformat(), youtube_id))
+                elif status == 'published':
+                    cursor.execute('''
+                        UPDATE videos 
+                        SET status = ?, processed = 1, processed_at = ?
+                        WHERE youtube_id = ?
+                    ''', (status, datetime.now().isoformat(), youtube_id))
+                else:
+                    cursor.execute('''
+                        UPDATE videos 
+                        SET status = ?, virality_score = ?
+                        WHERE youtube_id = ?
+                    ''', (status, virality_score, youtube_id))
+            else:
+                # Update status only
+                if status == 'published':
+                    cursor.execute('''
+                        UPDATE videos 
+                        SET status = ?, processed = 1, processed_at = ?
+                        WHERE youtube_id = ?
+                    ''', (status, datetime.now().isoformat(), youtube_id))
+                else:
+                    cursor.execute('''
+                        UPDATE videos 
+                        SET status = ?
+                        WHERE youtube_id = ?
+                    ''', (status, youtube_id))
+
+            conn.commit()
+            logger.debug(f"Updated video {youtube_id} status to {status}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Error updating video status: {e}")
+            conn.rollback()
+            return False
+        finally:
+            conn.close()
+
     # Helper methods
 
     def _row_to_video_dict(self, row) -> Dict[str, Any]:
         """Convert database row to video dictionary."""
-        return {
+        result = {
             'id': row[0],
             'youtube_id': row[1],
             'title': row[2],
@@ -361,6 +485,20 @@ class Database:
             'url': row[11],
             'metadata_json': row[12]
         }
+        
+        # Add new phase 2 fields if they exist
+        if len(row) > 13:
+            result['status'] = row[13] if row[13] else 'discovered'
+            result['virality_score'] = row[14] if row[14] else 0.0
+            result['analyzed_at'] = row[15]
+            result['processed_at'] = row[16]
+        else:
+            result['status'] = 'discovered'
+            result['virality_score'] = 0.0
+            result['analyzed_at'] = None
+            result['processed_at'] = None
+        
+        return result
 
     def _row_to_clip_dict(self, row) -> Dict[str, Any]:
         """Convert database row to clip dictionary."""

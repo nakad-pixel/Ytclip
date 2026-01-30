@@ -100,6 +100,58 @@ class Transcriber:
                 os.remove(audio_path)
                 logger.debug(f"Cleaned up audio: {audio_path}")
 
+    def process_from_transcript_data(self, transcript_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Process transcription data from external sources (YouTube API, etc.).
+        Ensures compatibility with existing analyzer and editor modules.
+        
+        Args:
+            transcript_data: Transcription data with segments and timestamps
+            
+        Returns:
+            Processed transcription in standard format
+        """
+        # Validate required fields
+        if 'segments' not in transcript_data:
+            raise ValueError("Transcript data must contain 'segments'")
+        
+        # Ensure segments have required fields
+        processed_segments = []
+        for segment in transcript_data['segments']:
+            if not all(key in segment for key in ['start', 'end', 'text']):
+                raise ValueError(f"Segment missing required fields: {segment}")
+            
+            # Ensure words field exists
+            if 'words' not in segment:
+                # Create words from text (simple split)
+                words = []
+                segment_words = segment['text'].split()
+                for word_text in segment_words:
+                    words.append({
+                        'word': word_text,
+                        'start': segment['start'],
+                        'end': segment['end']
+                    })
+                segment['words'] = words
+            
+            processed_segments.append(segment)
+        
+        # Create standard transcription format
+        result = {
+            'segments': processed_segments,
+            'text': ' '.join(seg['text'] for seg in processed_segments),
+            'language': transcript_data.get('language', 'en'),
+            'duration': processed_segments[-1]['end'] if processed_segments else 0,
+            'source': transcript_data.get('source', 'external')
+        }
+        
+        # Add optional fields if present
+        if 'video_id' in transcript_data:
+            result['video_id'] = transcript_data['video_id']
+        
+        logger.info(f"Processed external transcript: {len(result['segments'])} segments, {result['duration']:.2f}s")
+        return result
+
     def get_text_segments(self, transcription: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Extract text segments with timestamps from transcription."""
         segments = []

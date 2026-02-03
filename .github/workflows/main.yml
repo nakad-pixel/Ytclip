@@ -1,18 +1,32 @@
-name: AutoClip Gaming Pipeline
+name: AutoClip Gaming Pipeline - Two Phase
 
 on:
   schedule:
-    - cron: '0 */6 * * *' # Every 6 hours
+    # Phase 1 Analysis: Every 6 hours
+    - cron: '0 */6 * * *'
+    # Phase 2 Creation: Every 12 hours (at midnight and noon UTC)
+    - cron: '0 0,12 * * *'
   workflow_dispatch:
+    inputs:
+      phase:
+        description: 'Phase to run'
+        required: true
+        type: choice
+        options:
+          - analysis
+          - creation
+          - both
 
 env:
   PYTHON_VERSION: '3.10'
 
 jobs:
+  # Discovery job runs before analysis
   discover:
     runs-on: ubuntu-latest
+    # Only run on scheduled events or manual dispatch with both/analysis
+    if: github.event_name == 'schedule' || github.event.inputs.phase == 'both' || github.event.inputs.phase == 'analysis'
     outputs:
-      videos: ${{ steps.extract_videos.outputs.videos }}
       videos_count: ${{ steps.extract_videos.outputs.videos_count }}
     steps:
       - uses: actions/checkout@v4
@@ -45,12 +59,11 @@ jobs:
         env:
           YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
       
-      - name: Extract videos and set output
+      - name: Extract videos count
         id: extract_videos
         run: |
           if [ ! -f data/discovered_videos.json ]; then
             echo "❌ ERROR: discovery.py did not create discovered_videos.json"
-            echo "videos=[]" >> $GITHUB_OUTPUT
             echo "videos_count=0" >> $GITHUB_OUTPUT
             exit 1
           fi
@@ -58,121 +71,136 @@ jobs:
           # Get count
           count=$(jq length data/discovered_videos.json 2>/dev/null || echo "0")
           echo "videos_count=${count}" >> $GITHUB_OUTPUT
-          
-          # Get video IDs as JSON array (use Python for robustness)
-          videos=$(python3 -c "
-          import json
-          with open('data/discovered_videos.json') as f:
-              data = json.load(f)
-          ids = [v['youtube_id'] for v in data]
-          print(json.dumps(ids))
-          " 2>/dev/null || echo "[]")
-          
-          echo "videos=${videos}" >> $GITHUB_OUTPUT
-          
-          echo "✓ Extracted ${count} videos"
-          echo "Video IDs: ${videos}"
+          echo "✓ Discovered ${count} videos"
       
-      - name: Upload videos artifact
+      - name: Upload database artifact
         uses: actions/upload-artifact@v4
         with:
-          name: discovered-videos
-          path: data/discovered_videos.json
+          name: discovery-database
+          path: data/videos.db
           if-no-files-found: ignore
 
-  process:
+  # Phase 1: Analysis - runs every 6 hours
+  analyze-videos:
     needs: discover
-    if: ${{ needs.discover.result == 'success' && needs.discover.outputs.videos_count != '0' && needs.discover.outputs.videos_count != '' }}
     runs-on: ubuntu-latest
-
-    strategy:
-      fail-fast: false
-      matrix:
-        video: ${{ fromJson(needs.discover.outputs.videos || '[]') }}
-      max-parallel: 2
-
+    # Run on schedule at 6-hour intervals OR manual dispatch
+    if: |
+      (github.event_name == 'schedule' && github.event.schedule == '0 */6 * * *') ||
+      github.event.inputs.phase == 'analysis' ||
+      github.event.inputs.phase == 'both'
+    
     steps:
       - uses: actions/checkout@v4
-
-      - name: Check discovery results
-        run: |
-          echo "Videos found: ${{ needs.discover.outputs.videos_count }}"
-          echo "Video IDs: ${{ needs.discover.outputs.videos }}"
-          echo "Processing video: ${{ matrix.video }}"
-
+      
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-
+      
       - name: Install system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg
-
+      
       - name: Install Python dependencies
         run: pip install -r requirements.txt
-
-      - name: Process video
-        run: python src/processor.py --video-id ${{ matrix.video }}
+      
+      - name: Download database artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: discovery-database
+          path: data/
+        continue-on-error: true
+      
+      - name: Run Phase 1 Analysis
+        run: python src/processor.py --phase analysis
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      
+      - name: Upload analysis results
+        uses: actions/upload-artifact@v4
+        with:
+          name: analysis-results
+          path: |
+            data/phase_analysis_results.json
+            data/videos.db
+          if-no-files-found: ignore
+      
+      - name: Display analysis summary
+        if: always()
+        run: |
+          if [ -f data/phase_analysis_results.json ]; then
+            echo "📊 Analysis Results:"
+            jq -r '"Videos analyzed: \(.videos_analyzed)\nAbove threshold: \(.videos_above_threshold)\nFailures: \(.failures)"' data/phase_analysis_results.json
+          fi
 
-      - name: Upload results
+  # Phase 2: Creation - runs every 12 hours
+  process-and-publish:
+    runs-on: ubuntu-latest
+    # Run on schedule at 12-hour intervals OR manual dispatch
+    if: |
+      (github.event_name == 'schedule' && github.event.schedule == '0 0,12 * * *') ||
+      github.event.inputs.phase == 'creation' ||
+      github.event.inputs.phase == 'both'
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+      
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+      
+      - name: Download analysis database
+        uses: actions/download-artifact@v4
+        with:
+          name: analysis-results
+          path: data/
+        continue-on-error: true
+      
+      - name: Run Phase 2 Creation
+        run: python src/processor.py --phase creation
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+      
+      - name: Upload processing results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: processed-clips-${{ matrix.video }}
-          path: data/clips/
+          name: creation-results
+          path: |
+            data/phase_creation_results.json
+            data/clips/
+            data/videos.db
           if-no-files-found: ignore
-
-  publish:
-    needs: [discover, process]
-    if: ${{ needs.discover.result == 'success' && needs.process.result == 'success' && needs.discover.outputs.videos_count != '0' && needs.discover.outputs.videos_count != '' }}
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Check discovery results
+      
+      - name: Display creation summary
+        if: always()
         run: |
-          echo "Videos found: ${{ needs.discover.outputs.videos_count }}"
-          echo "Video IDs: ${{ needs.discover.outputs.videos }}"
-
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg
-
-      - name: Install Python dependencies
-        run: pip install -r requirements.txt
-
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: data/artifacts
-
-      - name: Organize clip data
-        run: |
-          mkdir -p data/clips
-          # Move all processed clips to统一的clips directory
-          find data/artifacts -name "*_result.json" -exec cp {} data/clips/ \;
-          # Copy clip files
-          find data/artifacts -name "*.mp4" -exec mkdir -p data/clips/clips \; -exec cp {} data/clips/clips/ \;
-          echo "✓ Organized clip data for smart publisher"
-
-      - name: Smart 1-Video Publishing
+          if [ -f data/phase_creation_results.json ]; then
+            echo "🎬 Creation Results:"
+            jq -r '"Videos processed: \(.videos_processed)\nClips generated: \(.clips_generated)\nFailures: \(.failures)"' data/phase_creation_results.json
+          fi
+      
+      - name: Smart Publishing
+        if: success()
         run: python src/publisher.py
         env:
           YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
           TIKTOK_ACCESS_TOKEN: ${{ secrets.TIKTOK_ACCESS_TOKEN }}
           INSTAGRAM_ACCESS_TOKEN: ${{ secrets.INSTAGRAM_ACCESS_TOKEN }}
-
+        continue-on-error: true
+      
       - name: Upload publishing state
         if: always()
         uses: actions/upload-artifact@v4
@@ -181,13 +209,18 @@ jobs:
           path: data/publishing_state.json
           if-no-files-found: ignore
 
+  # Cleanup job - runs after all jobs complete
   cleanup:
     if: always()
-    needs: [discover, process, publish]
+    needs: [discover, analyze-videos, process-and-publish]
     runs-on: ubuntu-latest
-
+    
     steps:
-      - name: Delete artifacts
+      - name: Delete old artifacts
         uses: geekyeggo/delete-artifact@v2
         with:
-          name: '*'
+          name: |
+            discovery-database
+            analysis-results
+            creation-results
+          failOnError: false

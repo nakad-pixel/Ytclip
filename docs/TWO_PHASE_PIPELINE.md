@@ -1,24 +1,27 @@
-# Two-Phase Optimized Video Processing Pipeline
+# Unified Video Processing Pipeline
 
 ## Overview
 
-The AutoClip Gaming system uses a smart two-phase approach to maximize efficiency and avoid YouTube bot detection:
+The AutoClip Gaming system uses a smart two-phase approach that runs sequentially to maximize efficiency and avoid YouTube bot detection:
 
-1. **Phase 1 (Analysis):** Discover and analyze ALL discovered videos using transcripts + Gemini AI (no downloads)
-2. **Phase 2 (Creation):** Download and process ONLY the top-scoring videos based on virality scores
+1. **Phase 1 (Discovery + Analysis):** Discover and analyze ALL discovered videos using transcripts + Gemini AI (no downloads)
+2. **Phase 2 (Creation + Publishing):** Download and process ONLY the top-scoring videos based on virality scores
+
+Both phases run together in a single unified pipeline every 6 hours.
 
 ## Benefits
 
+✅ **Unified Pipeline:** Analysis and creation always run together, ensuring consistency  
 ✅ **Bot Detection Prevention:** Fewer downloads = less suspicious activity  
 ✅ **Bandwidth Efficiency:** Only download top-scoring videos  
 ✅ **Time Efficiency:** Analysis (transcripts) is fast; creation is slow but minimal  
 ✅ **Quality:** Only publish highest virality content  
 ✅ **Scalability:** Can discover 100+ videos but only process 2-4 per day  
-✅ **Failure Isolation:** Phase 1 failures don't block Phase 2 (they're separate jobs)  
+✅ **Sequential Execution:** Phase 2 always has fresh data from Phase 1  
 
 ## Architecture
 
-### Phase 1: Analysis (Every 6 Hours)
+### Phase 1: Discovery + Analysis (Runs Every 6 Hours)
 
 ```
 Discovery → Fetch Transcripts (YouTube API) → AI Analysis → Score Videos → Database
@@ -32,10 +35,11 @@ Discovery → Fetch Transcripts (YouTube API) → AI Analysis → Score Videos �
    - Calculate virality score (0-100)
    - Store score and status='analyzed' in database
 3. Log summary of analyzed videos
+4. Pass database artifact to Phase 2
 
 **No Downloads:** This phase uses YouTube's free transcript API instead of downloading videos.
 
-### Phase 2: Creation (Every 12 Hours)
+### Phase 2: Creation + Publishing (Follows Phase 1)
 
 ```
 Select Top Videos → Download → Extract Clips → Generate Metadata → QA Check → Publish
@@ -52,7 +56,7 @@ Select Top Videos → Download → Extract Clips → Generate Metadata → QA Ch
    - Cleanup downloads
    - Mark status='published'
 
-**Selective Processing:** Only downloads and processes 2-4 top videos per day.
+**Selective Processing:** Only downloads and processes 2-4 top videos per run.
 
 ## Configuration
 
@@ -63,10 +67,9 @@ processing:
   # Phase 1: Analysis phase (no downloads)
   max_videos_to_analyze: 100      # Analyze up to 100 discovered videos
   virality_threshold: 70           # Minimum score to proceed to Phase 2
-  
+
   # Phase 2: Download & publish phase
   max_videos_to_process: 2         # Only download/process top 2 videos per cycle
-  processing_interval_hours: 12    # Phase 2 runs every 12 hours
 ```
 
 ## Database Schema
@@ -105,28 +108,34 @@ python src/processor.py --video-id VIDEO_ID
 
 ## GitHub Actions Schedule
 
-The workflow automatically runs both phases:
+The workflow automatically runs the complete unified pipeline:
 
-- **Phase 1 (Analysis):** Every 6 hours
+- **Full Pipeline (Discovery → Analysis → Creation → Publishing):** Every 6 hours
   - `0 */6 * * *` (00:00, 06:00, 12:00, 18:00 UTC)
-  
-- **Phase 2 (Creation):** Every 12 hours
-  - `0 0,12 * * *` (00:00, 12:00 UTC)
+
+The workflow runs sequentially with proper job dependencies:
+1. `discover` - Discovers new videos
+2. `analyze-videos` - Analyzes discovered videos (needs: discover)
+3. `process-and-publish` - Creates clips and publishes (needs: analyze-videos)
+4. `cleanup` - Cleans up artifacts (needs: all)
 
 ### Manual Trigger
 
-You can manually trigger specific phases from GitHub Actions UI:
+You can manually trigger the full pipeline from GitHub Actions UI:
 
 1. Go to Actions tab
-2. Select "AutoClip Gaming Pipeline - Two Phase"
+2. Select "AutoClip Gaming Pipeline"
 3. Click "Run workflow"
-4. Select phase: `analysis`, `creation`, or `both`
+4. Select "Run full pipeline" checkbox (default: true)
+5. Click "Run workflow" button
+
+The manual trigger will run the complete pipeline: Discovery → Analysis → Creation → Publishing
 
 ## Example Scenario
 
-### Day 1
+### Run at 00:00 UTC
 
-**00:00 UTC - Discovery + Phase 1 Analysis:**
+**Discovery + Phase 1 Analysis:**
 - Discovers 20 new videos
 - Analyzes all 20 (transcripts + Gemini)
 - Scores: [45, 62, 58, 78, 91, 55, 68, 73, 82, 69, ...]
@@ -134,27 +143,39 @@ You can manually trigger specific phases from GitHub Actions UI:
 - Status updated to 'analyzed'
 - **No downloads, no bot risk**
 
-**06:00 UTC - Phase 1 Analysis:**
-- Discovers 15 more videos
-- Analyzes all 15
-- Adds to analyzed pool
-
-**12:00 UTC - Phase 2 Creation:**
-- Queries top 2 videos: Video A (91), Video B (82)
+**Phase 2 Creation & Publishing (immediately follows):**
+- Queries top 2 videos from the just-analyzed pool: Video A (91), Video B (82)
 - Downloads Video A → extracts 6 clips → publishes to 3 platforms
 - Downloads Video B → extracts 6 clips → publishes to 3 platforms
 - Marks both as 'published'
 - Cleans up downloads
 - **Minimal downloads, maximum quality**
 
-**18:00 UTC - Phase 1 Analysis:**
-- Analyzes another batch of discovered videos
+### Run at 06:00 UTC
 
-### Day 2
+**Discovery + Phase 1 Analysis:**
+- Discovers 15 more videos
+- Analyzes all 15
+- Adds to analyzed pool
 
-**00:00 UTC - Discovery + Phase 1 + Phase 2:**
-- Continues rolling discovery and analysis
-- Phase 2 processes next top 2 videos from analyzed pool
+**Phase 2 Creation & Publishing (immediately follows):**
+- Processes next top 2 videos from analyzed pool (could include videos from previous runs)
+- Downloads, extracts clips, and publishes
+
+### Run at 12:00 UTC and 18:00 UTC
+
+Same pattern continues:
+1. Discover new videos
+2. Analyze all discovered videos
+3. Process top 2 highest-scoring videos
+4. Publish clips
+5. Cleanup
+
+**Key Benefits of Unified Pipeline:**
+- Fresh analysis data for every creation phase
+- No waiting 12 hours between analysis and creation
+- Consistent quality scoring across runs
+- Reduced risk of stale data
 
 ## API Requirements
 
@@ -294,17 +315,18 @@ ORDER BY processed_at DESC;
 
 ### Daily Capacity
 - **Analysis:** Up to 400 videos/day (4 cycles × 100 videos)
-- **Creation:** 4-8 videos/day (2 cycles × 2-4 videos)
-- **Clips Published:** 24-72 clips/day (4-8 videos × 6 clips)
+- **Creation:** 8 videos/day (4 cycles × 2 videos)
+- **Clips Published:** 48 clips/day (8 videos × 6 clips)
 
 ## Best Practices
 
-1. **Run discovery frequently** (every 6 hours) to build analyzed pool
+1. **Pipeline runs automatically** every 6 hours - no manual scheduling needed
 2. **Keep virality threshold high** (70-80) for quality control
-3. **Process conservatively** (2-4 videos per cycle) to avoid bot detection
+3. **Process conservatively** (2 videos per cycle) to avoid bot detection
 4. **Monitor scores** - adjust threshold if too few/many videos qualify
 5. **Clean up old analyzed videos** periodically (>30 days old)
 6. **Backup database** before major changes
+7. **Use manual trigger** for on-demand runs (e.g., after config changes)
 
 ## Migration from Old Pipeline
 

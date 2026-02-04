@@ -1,31 +1,26 @@
-name: AutoClip Gaming Pipeline - Two Phase
+name: AutoClip Gaming Pipeline
 
 on:
   schedule:
-    # Phase 1 Analysis: Every 6 hours
+    # Full pipeline runs every 6 hours
     - cron: '0 */6 * * *'
-    # Phase 2 Creation: Every 12 hours (at midnight and noon UTC)
-    - cron: '0 0,12 * * *'
   workflow_dispatch:
     inputs:
-      phase:
-        description: 'Phase to run'
+      run_full_pipeline:
+        description: 'Run the complete pipeline (Discovery → Analysis → Creation → Publishing)'
         required: true
-        type: choice
-        options:
-          - analysis
-          - creation
-          - both
+        type: boolean
+        default: true
 
 env:
   PYTHON_VERSION: '3.10'
 
 jobs:
-  # Discovery job runs before analysis
+  # Discovery job - first step in the pipeline
   discover:
     runs-on: ubuntu-latest
-    # Only run on scheduled events or manual dispatch with both/analysis
-    if: github.event_name == 'schedule' || github.event.inputs.phase == 'both' || github.event.inputs.phase == 'analysis'
+    # Always run on schedule or manual dispatch
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_full_pipeline == 'true')
     outputs:
       videos_count: ${{ steps.extract_videos.outputs.videos_count }}
     steps:
@@ -80,16 +75,12 @@ jobs:
           path: data/videos.db
           if-no-files-found: ignore
 
-  # Phase 1: Analysis - runs every 6 hours
+  # Phase 1: Analysis - runs after discovery
   analyze-videos:
     needs: discover
     runs-on: ubuntu-latest
-    # Run on schedule at 6-hour intervals OR manual dispatch
-    if: |
-      (github.event_name == 'schedule' && github.event.schedule == '0 */6 * * *') ||
-      github.event.inputs.phase == 'analysis' ||
-      github.event.inputs.phase == 'both'
-    
+    # Runs after discovery completes successfully
+
     steps:
       - uses: actions/checkout@v4
       
@@ -114,7 +105,6 @@ jobs:
         with:
           name: discovery-database
           path: data/
-        continue-on-error: true
       
       - name: Run Phase 1 Analysis
         run: python src/processor.py --phase analysis
@@ -138,15 +128,12 @@ jobs:
             jq -r '"Videos analyzed: \(.videos_analyzed)\nAbove threshold: \(.videos_above_threshold)\nFailures: \(.failures)"' data/phase_analysis_results.json
           fi
 
-  # Phase 2: Creation - runs every 12 hours
+  # Phase 2: Creation & Publishing - runs after analysis
   process-and-publish:
+    needs: analyze-videos
     runs-on: ubuntu-latest
-    # Run on schedule at 12-hour intervals OR manual dispatch
-    if: |
-      (github.event_name == 'schedule' && github.event.schedule == '0 0,12 * * *') ||
-      github.event.inputs.phase == 'creation' ||
-      github.event.inputs.phase == 'both'
-    
+    # Runs after analysis completes successfully
+
     steps:
       - uses: actions/checkout@v4
       
@@ -171,7 +158,6 @@ jobs:
         with:
           name: analysis-results
           path: data/
-        continue-on-error: true
       
       - name: Run Phase 2 Creation
         run: python src/processor.py --phase creation

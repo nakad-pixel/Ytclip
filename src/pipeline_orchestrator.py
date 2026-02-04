@@ -229,20 +229,68 @@ class PipelineOrchestrator:
 
         return results
 
+    def run_full_pipeline(self) -> Dict[str, Any]:
+        """
+        Run the complete pipeline: Analysis → Creation.
+
+        This method coordinates both phases to ensure they run sequentially
+        and pass data properly between them.
+
+        Returns:
+            Combined results from both phases
+        """
+        logger.info("="*60)
+        logger.info("RUNNING FULL PIPELINE")
+        logger.info("="*60)
+
+        # Run Phase 1: Analysis
+        phase1_results = self.run_phase_1_analysis()
+
+        # Check if we have videos above threshold
+        if phase1_results['videos_above_threshold'] == 0:
+            logger.warning("No videos above virality threshold. Skipping Phase 2.")
+            return {
+                'phase1': phase1_results,
+                'phase2': None,
+                'total_clips': 0
+            }
+
+        # Run Phase 2: Creation
+        phase2_results = self.run_phase_2_creation()
+
+        # Combine results
+        combined_results = {
+            'phase1': phase1_results,
+            'phase2': phase2_results,
+            'total_clips': phase2_results.get('clips_generated', 0)
+        }
+
+        # Print final summary
+        logger.info("\n" + "="*60)
+        logger.info("FULL PIPELINE COMPLETE - Final Summary")
+        logger.info("="*60)
+        logger.info(f"Phase 1 - Analyzed: {phase1_results['videos_analyzed']} videos")
+        logger.info(f"Phase 1 - Above threshold: {phase1_results['videos_above_threshold']} videos")
+        logger.info(f"Phase 2 - Processed: {phase2_results['videos_processed']} videos")
+        logger.info(f"Phase 2 - Clips generated: {phase2_results['clips_generated']} clips")
+        logger.info(f"Phase 2 - Failures: {phase2_results['failures']}")
+
+        return combined_results
+
 
 def main():
     """Test orchestrator."""
     from config_validator import ConfigValidator
-    
+
     validator = ConfigValidator()
     config = validator.get_config() or {}
 
     orchestrator = PipelineOrchestrator(config)
 
-    # Test phase 1
-    logger.info("Testing Phase 1...")
-    results = orchestrator.run_phase_1_analysis()
-    logger.info(f"Phase 1 results: {results}")
+    # Run full pipeline
+    logger.info("Running full pipeline test...")
+    results = orchestrator.run_full_pipeline()
+    logger.info(f"Full pipeline results: {results}")
 
 
 if __name__ == '__main__':

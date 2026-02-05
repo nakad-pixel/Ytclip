@@ -15,7 +15,7 @@ google-generativeai==0.3.1
 
 # Browser automation for stealth downloader
 playwright==1.40.0
-playwright-stealth==1.0.1
+playwright-stealth==1.0.6
 
 # Data & Database
 pandas==2.1.3

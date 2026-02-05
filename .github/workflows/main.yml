@@ -13,7 +13,7 @@ on:
         default: true
 
 env:
-  PYTHON_VERSION: '3.10'
+  PYTHON_VERSION: '3.11'
 
 jobs:
   # Discovery job - first step in the pipeline
@@ -75,11 +75,20 @@ jobs:
           path: data/videos.db
           if-no-files-found: ignore
 
+      - name: Check if videos were discovered
+        if: steps.extract_videos.outputs.videos_count == '0'
+        run: |
+          echo "⚠️ No videos discovered. Pipeline will stop here."
+          echo "This is normal if no new videos match your criteria."
+
   # Phase 1: Analysis - runs after discovery
   analyze-videos:
     needs: discover
     runs-on: ubuntu-latest
-    # Runs after discovery completes successfully
+    # Only run if discovery found videos
+    if: needs.discover.outputs.videos_count > 0
+    outputs:
+      videos_above_threshold: ${{ steps.extract_analysis.outputs.videos_above_threshold }}
 
     steps:
       - uses: actions/checkout@v4
@@ -128,11 +137,37 @@ jobs:
             jq -r '"Videos analyzed: \(.videos_analyzed)\nAbove threshold: \(.videos_above_threshold)\nFailures: \(.failures)"' data/phase_analysis_results.json
           fi
 
+      - name: Extract analysis results
+        id: extract_analysis
+        if: always()
+        run: |
+          if [ -f data/phase_analysis_results.json ]; then
+            count=$(jq -r '.videos_above_threshold // 0' data/phase_analysis_results.json)
+            echo "videos_above_threshold=${count}" >> $GITHUB_OUTPUT
+            echo "✓ Videos above threshold: ${count}"
+          else
+            echo "videos_above_threshold=0" >> $GITHUB_OUTPUT
+            echo "⚠️ No analysis results found"
+          fi
+
+  # Notification job - runs when no videos are above threshold
+  notify-no-videos:
+    needs: analyze-videos
+    runs-on: ubuntu-latest
+    if: needs.analyze-videos.outputs.videos_above_threshold == '0'
+    steps:
+      - name: No videos above threshold
+        run: |
+          echo "⚠️ No videos above virality threshold."
+          echo "Pipeline will stop here. This is normal if all discovered videos have low virality scores."
+          echo "Consider adjusting the virality_threshold in config.yaml (current: 70)."
+
   # Phase 2: Creation & Publishing - runs after analysis
   process-and-publish:
     needs: analyze-videos
     runs-on: ubuntu-latest
-    # Runs after analysis completes successfully
+    # Only run if analysis found videos above threshold
+    if: needs.analyze-videos.outputs.videos_above_threshold > 0
 
     steps:
       - uses: actions/checkout@v4
@@ -204,7 +239,7 @@ jobs:
   # Cleanup job - runs after all jobs complete
   cleanup:
     if: always()
-    needs: [discover, analyze-videos, process-and-publish]
+    needs: [discover, analyze-videos, process-and-publish, notify-no-videos]
     runs-on: ubuntu-latest
     
     steps:

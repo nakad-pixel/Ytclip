@@ -14,11 +14,12 @@ on:
 
 env:
   PYTHON_VERSION: '3.11'
+  RUNNER_OS: 'ubuntu-22.04'
 
 jobs:
   # Discovery job - first step in the pipeline
   discover:
-    runs-on: ubuntu-latest
+    runs-on: ${{ env.RUNNER_OS }}
     # Always run on schedule or manual dispatch
     if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.event.inputs.run_full_pipeline == 'true')
     outputs:
@@ -84,7 +85,7 @@ jobs:
   # Phase 1: Analysis - runs after discovery
   analyze-videos:
     needs: discover
-    runs-on: ubuntu-latest
+    runs-on: ${{ env.RUNNER_OS }}
     # Only run if discovery found videos
     if: needs.discover.outputs.videos_count > 0
     outputs:
@@ -153,7 +154,7 @@ jobs:
   # Notification job - runs when no videos are above threshold
   notify-no-videos:
     needs: analyze-videos
-    runs-on: ubuntu-latest
+    runs-on: ${{ env.RUNNER_OS }}
     if: needs.analyze-videos.outputs.videos_above_threshold == '0'
     steps:
       - name: No videos above threshold
@@ -165,7 +166,7 @@ jobs:
   # Phase 2: Creation & Publishing - runs after analysis
   process-and-publish:
     needs: analyze-videos
-    runs-on: ubuntu-latest
+    runs-on: ${{ env.RUNNER_OS }}
     # Only run if analysis found videos above threshold
     if: needs.analyze-videos.outputs.videos_above_threshold > 0
 
@@ -240,7 +241,7 @@ jobs:
   cleanup:
     if: always()
     needs: [discover, analyze-videos, process-and-publish, notify-no-videos]
-    runs-on: ubuntu-latest
+    runs-on: ${{ env.RUNNER_OS }}
     
     steps:
       - name: Delete old artifacts

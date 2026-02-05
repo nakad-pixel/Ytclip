@@ -37,10 +37,13 @@ class SmartPublisher:
         self.state_file = state_file
         self.earning_calculator = EarningCalculator()
         self.state = self._load_state()
-        
+
+        # Load config to get daily limit
+        self.daily_limit = self._load_daily_limit()
+
         # Initialize platform publishers
         self.publishers = self._initialize_publishers()
-        
+
         logger.info("Initialized SmartPublisher")
 
     def _initialize_publishers(self) -> Dict[str, Any]:
@@ -77,7 +80,7 @@ class SmartPublisher:
                 return state
             except Exception as e:
                 logger.warning(f"Could not load state file: {e}")
-        
+
         # Default state
         return {
             'published_videos': [],
@@ -87,6 +90,39 @@ class SmartPublisher:
             'daily_count': {},
             'last_updated': datetime.now().isoformat()
         }
+
+    def _load_daily_limit(self) -> int:
+        """Load daily publishing limit from config."""
+        try:
+            import yaml
+            config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'config', 'config.yaml')
+
+            if os.path.exists(config_path):
+                with open(config_path, 'r') as f:
+                    config = yaml.safe_load(f)
+
+                daily_limit = config.get('publishing', {}).get('daily_limit', 3)
+                logger.info(f"Loaded daily_limit from config: {daily_limit}")
+                return daily_limit
+            else:
+                logger.warning(f"Config file not found at {config_path}, using default daily_limit: 3")
+                return 3
+        except Exception as e:
+            logger.warning(f"Could not load daily_limit from config: {e}, using default: 3")
+            return 3
+
+    def _check_daily_limit(self) -> bool:
+        """Check if daily publishing limit has been reached."""
+        today = datetime.now().strftime('%Y-%m-%d')
+        published_today = self.state.get('daily_count', {}).get(today, 0)
+
+        logger.info(f"Daily limit check: {published_today}/{self.daily_limit} published today")
+
+        if published_today >= self.daily_limit:
+            logger.warning(f"Daily limit of {self.daily_limit} already reached. Skipping publishing.")
+            return False
+
+        return True
 
     def _save_state(self):
         """Save current publishing state."""
@@ -402,12 +438,25 @@ class SmartPublisher:
         logger.info("=" * 60)
         logger.info("🚀 STARTING SMART 1-VIDEO PUBLISHING")
         logger.info("=" * 60)
-        
+
         try:
+            # Step 0: Check daily limit
+            logger.info("\n🔒 Step 0: Checking daily limit...")
+            if not self._check_daily_limit():
+                today = datetime.now().strftime('%Y-%m-%d')
+                published_today = self.state.get('daily_count', {}).get(today, 0)
+                return {
+                    'success': False,
+                    'error': f'Daily limit reached ({self.daily_limit}/{self.daily_limit} published today)',
+                    'published_count': 0,
+                    'daily_limit_reached': True,
+                    'published_today': published_today
+                }
+
             # Step 1: Load available clips
             logger.info("\n📂 Step 1: Loading available clips...")
             all_clips = self._load_clip_data()
-            
+
             if not all_clips:
                 logger.warning("❌ No clips found to publish")
                 return {
@@ -415,7 +464,7 @@ class SmartPublisher:
                     'error': 'No clips available',
                     'published_count': 0
                 }
-            
+
             logger.info(f"✓ Found {len(all_clips)} clips to evaluate")
             
             # Step 2: Apply filters

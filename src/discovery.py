@@ -12,7 +12,8 @@ from datetime import datetime, timedelta
 from typing import List, Dict, Any
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
-import sqlite3
+
+from database import Database
 
 # Configure logging
 logging.basicConfig(
@@ -46,7 +47,7 @@ class DiscoveryService:
         logger.info(f"Created/verified data directory")
         
         # Initialize database
-        self._init_db()
+        self.db = Database(self.db_path)
         
         # Initialize YouTube API
         try:
@@ -81,31 +82,6 @@ class DiscoveryService:
         except Exception as e:
             raise ValueError(f"Could not connect to YouTube API: {str(e)}")
 
-    def _init_db(self):
-        """Initialize SQLite database for tracking processed videos."""
-        try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS videos (
-                    id TEXT PRIMARY KEY,
-                    youtube_id TEXT UNIQUE,
-                    title TEXT,
-                    channel TEXT,
-                    view_count INTEGER,
-                    published_at TEXT,
-                    niche TEXT,
-                    processed BOOLEAN DEFAULT 0,
-                    discovered_at TEXT,
-                    url TEXT
-                )
-            ''')
-            conn.commit()
-            conn.close()
-            logger.info(f"Database initialized: {self.db_path}")
-        except Exception as e:
-            logger.error(f"Failed to initialize database: {e}")
-            raise
 
     def search_niche(self, niche: str) -> List[Dict[str, Any]]:
         """Search for videos in a specific niche."""
@@ -169,12 +145,8 @@ class DiscoveryService:
     def is_already_processed(self, video_id: str) -> bool:
         """Check if video has already been processed."""
         try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            cursor.execute('SELECT processed FROM videos WHERE youtube_id = ?', (video_id,))
-            result = cursor.fetchone()
-            conn.close()
-            return result is not None and result[0]
+            video = self.db.get_video(video_id)
+            return bool(video and video.get('processed'))
         except Exception as e:
             logger.error(f"Error checking processed status for {video_id}: {e}")
             return False
@@ -182,24 +154,17 @@ class DiscoveryService:
     def save_video(self, video_id: str, metadata: Dict[str, Any]) -> None:
         """Save discovered video to database."""
         try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            cursor.execute('''
-                INSERT OR IGNORE INTO videos
-                (youtube_id, title, channel, view_count, published_at, niche, discovered_at, url)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                video_id,
-                metadata['title'],
-                metadata['channel'],
-                metadata['view_count'],
-                metadata['published_at'],
-                metadata['niche'],
-                datetime.now().isoformat(),
-                f"https://www.youtube.com/watch?v={video_id}"
-            ))
-            conn.commit()
-            conn.close()
+            self.db.add_video({
+                'youtube_id': video_id,
+                'title': metadata['title'],
+                'channel': metadata['channel'],
+                'view_count': metadata['view_count'],
+                'published_at': metadata['published_at'],
+                'niche': metadata['niche'],
+                'discovered_at': datetime.now().isoformat(),
+                'url': f"https://www.youtube.com/watch?v={video_id}",
+                'metadata_json': json.dumps(metadata)
+            })
             logger.debug(f"Video {video_id} saved to database")
         except Exception as e:
             logger.error(f"Error saving video {video_id}: {e}")

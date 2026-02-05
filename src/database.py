@@ -31,9 +31,36 @@ class Database:
         """Ensure database directory exists."""
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
 
+    def _get_connection(self) -> sqlite3.Connection:
+        """Create a database connection with row access by column name."""
+        conn = self._get_connection()
+        conn.row_factory = sqlite3.Row
+        return conn
+
+    def _ensure_video_columns(self, cursor: sqlite3.Cursor) -> None:
+        """Ensure video table includes all expected columns."""
+        cursor.execute('PRAGMA table_info(videos)')
+        existing_columns = {row[1] for row in cursor.fetchall()}
+        columns_to_add = {
+            'like_count': 'INTEGER DEFAULT 0',
+            'comment_count': 'INTEGER DEFAULT 0',
+            'metadata_json': 'TEXT',
+            'status': "TEXT DEFAULT 'discovered'",
+            'virality_score': 'REAL DEFAULT 0.0',
+            'analyzed_at': 'TEXT',
+            'processed_at': 'TEXT',
+            'url': 'TEXT',
+            'processed': 'BOOLEAN DEFAULT 0',
+            'discovered_at': 'TEXT'
+        }
+
+        for column_name, column_def in columns_to_add.items():
+            if column_name not in existing_columns:
+                cursor.execute(f'ALTER TABLE videos ADD COLUMN {column_name} {column_def}')
+
     def _init_tables(self):
         """Create database tables if they don't exist."""
-        conn = sqlite3.connect(self.db_path)
+        conn = self._get_connection()
         cursor = conn.cursor()
 
         # Videos table for tracking discovered videos
@@ -58,27 +85,9 @@ class Database:
                 processed_at TEXT
             )
         ''')
-        
-        # Add new columns to existing tables (for backward compatibility)
-        try:
-            cursor.execute('ALTER TABLE videos ADD COLUMN status TEXT DEFAULT "discovered"')
-        except sqlite3.OperationalError:
-            pass  # Column already exists
-        
-        try:
-            cursor.execute('ALTER TABLE videos ADD COLUMN virality_score REAL DEFAULT 0.0')
-        except sqlite3.OperationalError:
-            pass
-        
-        try:
-            cursor.execute('ALTER TABLE videos ADD COLUMN analyzed_at TEXT')
-        except sqlite3.OperationalError:
-            pass
-        
-        try:
-            cursor.execute('ALTER TABLE videos ADD COLUMN processed_at TEXT')
-        except sqlite3.OperationalError:
-            pass
+
+        self._ensure_video_columns(cursor)
+        cursor.execute("UPDATE videos SET status = 'discovered' WHERE status IS NULL")
 
         # Clips table for tracking generated clips
         cursor.execute('''
@@ -143,7 +152,7 @@ class Database:
         Returns:
             Video ID (database ID)
         """
-        conn = sqlite3.connect(self.db_path)
+        conn = self._get_connection()
         cursor = conn.cursor()
 
         try:
@@ -183,7 +192,7 @@ class Database:
 
     def get_video(self, youtube_id: str) -> Optional[Dict[str, Any]]:
         """Get video by YouTube ID."""
-        conn = sqlite3.connect(self.db_path)
+        conn = self._get_connection()
         cursor = conn.cursor()
 
         try:
@@ -202,7 +211,7 @@ class Database:
 
     def get_unprocessed_videos(self, limit: int = 10) -> List[Dict[str, Any]]:
         """Get list of videos that haven't been processed."""
-        conn = sqlite3.connect(self.db_path)
+        conn = self._get_connection()
         cursor = conn.cursor()
 
         try:
@@ -221,7 +230,7 @@ class Database:
 
     def mark_video_processed(self, youtube_id: str) -> bool:
         """Mark video as processed."""
-        conn = sqlite3.connect(self.db_path)
+        conn = self._get_connection()
         cursor = conn.cursor()
 
         try:
@@ -243,7 +252,7 @@ class Database:
 
     def add_clip(self, clip_data: Dict[str, Any]) -> int:
         """Add a generated clip to database."""
-        conn = sqlite3.connect(self.db_path)
+        conn = self._get_connection()
         cursor = conn.cursor()
 
         try:
@@ -285,7 +294,7 @@ class Database:
     def mark_clip_published(self, clip_id: int, platform_video_id: str,
                             platform: str) -> bool:
         """Mark clip as published."""
-        conn = sqlite3.connect(self.db_path)
+        conn = self._get_connection()
         cursor = conn.cursor()
 
         try:
@@ -307,7 +316,7 @@ class Database:
 
     def get_unpublished_clips(self, platform: str = None) -> List[Dict[str, Any]]:
         """Get clips that haven't been published yet."""
-        conn = sqlite3.connect(self.db_path)
+        conn = self._get_connection()
         cursor = conn.cursor()
 
         try:
@@ -332,7 +341,7 @@ class Database:
 
     def set_state(self, key: str, value: str) -> bool:
         """Set a state value."""
-        conn = sqlite3.connect(self.db_path)
+        conn = self._get_connection()
         cursor = conn.cursor()
 
         try:
@@ -353,7 +362,7 @@ class Database:
 
     def get_state(self, key: str) -> Optional[str]:
         """Get a state value."""
-        conn = sqlite3.connect(self.db_path)
+        conn = self._get_connection()
         cursor = conn.cursor()
 
         try:
@@ -371,7 +380,7 @@ class Database:
 
     def get_discovered_videos(self, limit: int = 100) -> List[Dict[str, Any]]:
         """Get all videos not yet analyzed."""
-        conn = sqlite3.connect(self.db_path)
+        conn = self._get_connection()
         cursor = conn.cursor()
 
         try:
@@ -393,7 +402,7 @@ class Database:
 
     def get_top_analyzed_videos(self, limit: int = 2, threshold: float = 70.0) -> List[Dict[str, Any]]:
         """Get top-scoring analyzed videos above threshold."""
-        conn = sqlite3.connect(self.db_path)
+        conn = self._get_connection()
         cursor = conn.cursor()
 
         try:
@@ -416,7 +425,7 @@ class Database:
     def update_video_status(self, youtube_id: str, status: str, 
                            virality_score: Optional[float] = None) -> bool:
         """Update video status and optionally virality score."""
-        conn = sqlite3.connect(self.db_path)
+        conn = self._get_connection()
         cursor = conn.cursor()
 
         try:
@@ -470,34 +479,55 @@ class Database:
 
     def _row_to_video_dict(self, row) -> Dict[str, Any]:
         """Convert database row to video dictionary."""
+        if hasattr(row, 'keys'):
+            row_dict = {key: row[key] for key in row.keys()}
+
+            result = {
+                'id': row_dict.get('id'),
+                'youtube_id': row_dict.get('youtube_id'),
+                'title': row_dict.get('title'),
+                'channel': row_dict.get('channel'),
+                'view_count': row_dict.get('view_count', 0),
+                'like_count': row_dict.get('like_count', 0),
+                'comment_count': row_dict.get('comment_count', 0),
+                'published_at': row_dict.get('published_at'),
+                'niche': row_dict.get('niche'),
+                'processed': bool(row_dict.get('processed', 0)),
+                'discovered_at': row_dict.get('discovered_at'),
+                'url': row_dict.get('url'),
+                'metadata_json': row_dict.get('metadata_json')
+            }
+
+            result['status'] = row_dict.get('status') or 'discovered'
+            result['virality_score'] = row_dict.get('virality_score') or 0.0
+            result['analyzed_at'] = row_dict.get('analyzed_at')
+            result['processed_at'] = row_dict.get('processed_at')
+            return result
+
+        def safe_index(index, default=None):
+            return row[index] if len(row) > index else default
+
         result = {
-            'id': row[0],
-            'youtube_id': row[1],
-            'title': row[2],
-            'channel': row[3],
-            'view_count': row[4],
-            'like_count': row[5],
-            'comment_count': row[6],
-            'published_at': row[7],
-            'niche': row[8],
-            'processed': bool(row[9]),
-            'discovered_at': row[10],
-            'url': row[11],
-            'metadata_json': row[12]
+            'id': safe_index(0),
+            'youtube_id': safe_index(1),
+            'title': safe_index(2),
+            'channel': safe_index(3),
+            'view_count': safe_index(4, 0),
+            'like_count': safe_index(5, 0),
+            'comment_count': safe_index(6, 0),
+            'published_at': safe_index(7),
+            'niche': safe_index(8),
+            'processed': bool(safe_index(9, 0)),
+            'discovered_at': safe_index(10),
+            'url': safe_index(11),
+            'metadata_json': safe_index(12)
         }
-        
-        # Add new phase 2 fields if they exist
-        if len(row) > 13:
-            result['status'] = row[13] if row[13] else 'discovered'
-            result['virality_score'] = row[14] if row[14] else 0.0
-            result['analyzed_at'] = row[15]
-            result['processed_at'] = row[16]
-        else:
-            result['status'] = 'discovered'
-            result['virality_score'] = 0.0
-            result['analyzed_at'] = None
-            result['processed_at'] = None
-        
+
+        result['status'] = safe_index(13) or 'discovered'
+        result['virality_score'] = safe_index(14) or 0.0
+        result['analyzed_at'] = safe_index(15)
+        result['processed_at'] = safe_index(16)
+
         return result
 
     def _row_to_clip_dict(self, row) -> Dict[str, Any]:

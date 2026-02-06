@@ -13,6 +13,9 @@ from typing import List, Dict, Any
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
+# Add src to path for imports (matching processor.py)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
 from database import Database
 
 # Configure logging
@@ -45,9 +48,15 @@ class DiscoveryService:
         # Create data directory
         os.makedirs('data', exist_ok=True)
         logger.info(f"Created/verified data directory")
-        
-        # Initialize database
-        self.db = Database(self.db_path)
+
+        # Initialize database with exception logging
+        try:
+            logger.info("Initializing database...")
+            self.db = Database(self.db_path)
+            logger.info("✓ Database initialized successfully")
+        except Exception as e:
+            logger.exception(f"Failed to initialize database: {str(e)}")
+            raise
         
         # Initialize YouTube API
         try:

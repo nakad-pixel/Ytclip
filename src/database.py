@@ -25,7 +25,12 @@ class Database:
         """
         self.db_path = db_path
         self._ensure_directory()
-        self._init_tables()
+        try:
+            self._init_tables()
+            logger.info(f"✓ Database initialized successfully: {self.db_path}")
+        except Exception as e:
+            logger.error(f"❌ Failed to initialize database: {e}")
+            raise
 
     def _ensure_directory(self):
         """Ensure database directory exists."""
@@ -33,7 +38,7 @@ class Database:
 
     def _get_connection(self) -> sqlite3.Connection:
         """Create a database connection with row access by column name."""
-        conn = self._get_connection()
+        conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
         return conn
 
@@ -60,8 +65,12 @@ class Database:
 
     def _init_tables(self):
         """Create database tables if they don't exist."""
-        conn = self._get_connection()
-        cursor = conn.cursor()
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+        except Exception as e:
+            logger.error(f"Failed to create database connection: {e}")
+            raise
 
         # Videos table for tracking discovered videos
         cursor.execute('''
